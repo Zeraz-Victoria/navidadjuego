@@ -1,0 +1,426 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Lluvia de Regalos Matemáticos</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Mountains+of+Christmas:wght@700&family=Nunito:wght@700&display=swap" rel="stylesheet">
+    <style>
+        body {
+            font-family: 'Nunito', sans-serif;
+            overflow: hidden;
+            touch-action: none; /* Crucial para juegos táctiles */
+        }
+        .font-christmas {
+            font-family: 'Mountains of Christmas', cursive;
+        }
+        canvas {
+            display: block;
+        }
+    </style>
+</head>
+<body class="bg-slate-900 text-white select-none">
+
+    <!-- HUD (Interfaz de juego) -->
+    <div id="ui-layer" class="absolute inset-0 pointer-events-none flex flex-col justify-between p-4 z-10 hidden">
+        <!-- Parte superior: Pregunta y Puntos -->
+        <div class="flex justify-between items-start">
+            <div class="bg-white/10 backdrop-blur-md rounded-2xl p-4 border border-white/20 shadow-lg">
+                <p class="text-xs text-blue-200 uppercase">Puntos</p>
+                <p id="scoreDisplay" class="text-4xl font-bold text-yellow-400">0</p>
+            </div>
+            
+            <div class="bg-red-600/90 backdrop-blur-md rounded-2xl px-8 py-4 border-b-8 border-red-800 shadow-xl transform hover:scale-105 transition-transform">
+                <p class="text-xs text-red-100 text-center uppercase mb-1">Encuentra el resultado</p>
+                <p id="questionDisplay" class="text-5xl font-mono font-bold text-white tracking-wider">¿?</p>
+            </div>
+
+            <div class="bg-white/10 backdrop-blur-md rounded-2xl p-4 border border-white/20 shadow-lg">
+                <p class="text-xs text-red-200 uppercase">Vidas</p>
+                <div id="livesDisplay" class="text-3xl">❤️❤️❤️</div>
+            </div>
+        </div>
+
+        <!-- Parte inferior: Instrucción -->
+        <div class="text-center text-white/50 text-sm mb-4">
+            Mueve a Santa 🎅 para atrapar la respuesta correcta
+        </div>
+    </div>
+
+    <!-- PANTALLA DE INICIO -->
+    <div id="startScreen" class="absolute inset-0 z-20 flex flex-col items-center justify-center bg-slate-900/90 backdrop-blur-sm p-4 text-center">
+        <h1 class="text-6xl md:text-8xl font-christmas text-red-500 drop-shadow-[0_4px_4px_rgba(255,255,255,0.2)] mb-4">Lluvia Navideña</h1>
+        <p class="text-2xl text-blue-200 mb-8 max-w-md">¡Las respuestas caen del cielo! Ayuda a Santa a atrapar el número correcto.</p>
+        
+        <div class="flex gap-4 flex-col sm:flex-row w-full max-w-md">
+            <button onclick="startGame('easy')" class="flex-1 bg-green-600 hover:bg-green-500 text-white font-bold py-4 px-6 rounded-2xl shadow-[0_6px_0_rgb(21,128,61)] active:shadow-none active:translate-y-1.5 transition-all text-xl">
+                🧸 Sumas (Fácil)
+            </button>
+            <button onclick="startGame('hard')" class="flex-1 bg-blue-600 hover:bg-blue-500 text-white font-bold py-4 px-6 rounded-2xl shadow-[0_6px_0_rgb(29,78,216)] active:shadow-none active:translate-y-1.5 transition-all text-xl">
+                ⚡ Multiplicar (Difícil)
+            </button>
+        </div>
+    </div>
+
+    <!-- PANTALLA GAME OVER -->
+    <div id="gameOverScreen" class="hidden absolute inset-0 z-30 flex flex-col items-center justify-center bg-black/85 backdrop-blur-md p-4 text-center">
+        <div class="text-6xl mb-4">🎅💔</div>
+        <h2 class="text-5xl font-christmas text-white mb-2">¡Juego Terminado!</h2>
+        <p class="text-gray-400 mb-6">Se acabaron las vidas.</p>
+        
+        <div class="bg-white/10 rounded-2xl p-6 mb-8 min-w-[200px]">
+            <p class="text-sm uppercase text-gray-400">Puntuación Final</p>
+            <p id="finalScore" class="text-6xl font-bold text-yellow-400">0</p>
+        </div>
+
+        <button onclick="location.reload()" class="bg-red-600 hover:bg-red-500 text-white font-bold py-4 px-12 rounded-full shadow-lg text-xl transition transform hover:scale-105">
+            Jugar Otra Vez
+        </button>
+    </div>
+
+    <canvas id="gameCanvas"></canvas>
+
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        let width, height;
+
+        // Elementos DOM
+        const uiLayer = document.getElementById('ui-layer');
+        const startScreen = document.getElementById('startScreen');
+        const gameOverScreen = document.getElementById('gameOverScreen');
+        const scoreDisplay = document.getElementById('scoreDisplay');
+        const questionDisplay = document.getElementById('questionDisplay');
+        const livesDisplay = document.getElementById('livesDisplay');
+        const finalScoreDisplay = document.getElementById('finalScore');
+
+        // Estado del juego
+        let gameState = 'MENU'; // MENU, PLAYING, GAMEOVER
+        let score = 0;
+        let lives = 3;
+        let mode = 'easy';
+        let speedMultiplier = 1;
+        let lastTime = 0;
+        let spawnTimer = 0;
+
+        // Pregunta actual
+        let currentQuestion = { text: "2 + 2", answer: 4 };
+
+        // Entidades
+        const player = {
+            x: 0,
+            y: 0,
+            width: 80,
+            height: 80,
+            emoji: '🎅',
+            targetX: 0 // Para movimiento suave
+        };
+
+        let fallingItems = [];
+        let particles = [];
+
+        // Configurar Canvas
+        function resize() {
+            width = window.innerWidth;
+            height = window.innerHeight;
+            canvas.width = width;
+            canvas.height = height;
+            player.y = height - 100;
+            if (gameState === 'MENU') player.x = width / 2;
+        }
+        window.addEventListener('resize', resize);
+        resize();
+
+        // --- SISTEMA DE PREGUNTAS ---
+        function generateQuestion() {
+            let num1, num2, text, answer;
+            
+            if (mode === 'easy') {
+                // Sumas hasta 20
+                num1 = Math.floor(Math.random() * 10) + 1;
+                num2 = Math.floor(Math.random() * 10) + 1;
+                text = `${num1} + ${num2}`;
+                answer = num1 + num2;
+            } else {
+                // Tablas de multiplicar del 2 al 9
+                num1 = Math.floor(Math.random() * 8) + 2;
+                num2 = Math.floor(Math.random() * 9) + 1;
+                text = `${num1} × ${num2}`;
+                answer = num1 * num2;
+            }
+            
+            currentQuestion = { text, answer };
+            questionDisplay.innerText = text;
+            
+            // Forzar spawn de la respuesta correcta pronto
+            spawnItem(true);
+        }
+
+        // --- BUCLE PRINCIPAL ---
+        function startGame(selectedMode) {
+            mode = selectedMode;
+            gameState = 'PLAYING';
+            score = 0;
+            lives = 3;
+            speedMultiplier = 1;
+            fallingItems = [];
+            particles = [];
+            
+            scoreDisplay.innerText = score;
+            livesDisplay.innerText = "❤️❤️❤️";
+            
+            startScreen.classList.add('hidden');
+            gameOverScreen.classList.add('hidden');
+            uiLayer.classList.remove('hidden');
+            
+            player.x = width / 2;
+            player.targetX = width / 2;
+
+            generateQuestion();
+            requestAnimationFrame(gameLoop);
+        }
+
+        function gameLoop(timestamp) {
+            if (gameState !== 'PLAYING') return;
+
+            const deltaTime = timestamp - lastTime;
+            lastTime = timestamp;
+
+            update(deltaTime);
+            draw();
+
+            requestAnimationFrame(gameLoop);
+        }
+
+        function update(deltaTime) {
+            // Movimiento Jugador (Lerp para suavidad)
+            player.x += (player.targetX - player.x) * 0.2;
+            
+            // Límites jugador
+            if (player.x < player.width/2) player.x = player.width/2;
+            if (player.x > width - player.width/2) player.x = width - player.width/2;
+
+            // Spawning
+            spawnTimer += 16; // Aproximadamente ms por frame
+            if (spawnTimer > 1500 / speedMultiplier) { // Spawn cada 1.5s (reducido por velocidad)
+                spawnItem(false); // Spawn item aleatorio
+                spawnTimer = 0;
+            }
+
+            // Actualizar Items
+            for (let i = fallingItems.length - 1; i >= 0; i--) {
+                let item = fallingItems[i];
+                item.y += item.speed * speedMultiplier;
+                item.rotation += item.rotSpeed;
+
+                // Colisión con suelo
+                if (item.y > height) {
+                    // Si cayó la respuesta correcta y no la atrapaste...
+                    if (item.value === currentQuestion.answer) {
+                        createExplosion(item.x, height - 20, '#EF4444'); // Rojo
+                        // Opcional: penalizar si se cae la correcta? 
+                        // Por ahora no penalizamos caída, solo atrapar incorrecta.
+                        // Pero debemos regenerar la correcta si se perdió
+                        setTimeout(() => spawnItem(true), 500);
+                    }
+                    fallingItems.splice(i, 1);
+                    continue;
+                }
+
+                // Colisión con Jugador (Círculo vs Cuadrado simple)
+                const dx = item.x - player.x;
+                const dy = item.y - player.y;
+                const distance = Math.sqrt(dx*dx + dy*dy);
+
+                if (distance < (player.width/2 + item.size/2)) {
+                    handleCatch(item);
+                    fallingItems.splice(i, 1);
+                }
+            }
+
+            // Actualizar partículas
+            for (let i = particles.length - 1; i >= 0; i--) {
+                let p = particles[i];
+                p.x += p.vx;
+                p.y += p.vy;
+                p.life -= 0.02;
+                if (p.life <= 0) particles.splice(i, 1);
+            }
+        }
+
+        function spawnItem(forceCorrect) {
+            const isCorrect = forceCorrect || Math.random() < 0.3; // 30% prob de que sea la correcta si es random
+            let value;
+
+            if (isCorrect) {
+                value = currentQuestion.answer;
+            } else {
+                // Generar respuesta incorrecta pero creíble (cercana)
+                let offset = Math.floor(Math.random() * 10) - 5; // -5 a 5
+                if (offset === 0) offset = 1;
+                value = Math.abs(currentQuestion.answer + offset);
+            }
+
+            // Evitar duplicados exactos superpuestos si es posible, pero simple por ahora
+            fallingItems.push({
+                x: Math.random() * (width - 100) + 50,
+                y: -50,
+                value: value,
+                isCorrect: value === currentQuestion.answer, // Nota: esto puede ser true por azar también
+                speed: Math.random() * 2 + 2,
+                size: 50,
+                color: isCorrect ? '#22c55e' : '#ef4444', // Verde (debug) o diferenciar? Mejor no diferenciar color visualmente
+                // Visual properties
+                rotation: 0,
+                rotSpeed: (Math.random() - 0.5) * 0.1,
+                emoji: ['🎁', '🎄', '⭐', '🍪'][Math.floor(Math.random()*4)]
+            });
+        }
+
+        function handleCatch(item) {
+            if (item.value === currentQuestion.answer) {
+                // CORRECTO
+                score += 10;
+                scoreDisplay.innerText = score;
+                createExplosion(player.x, player.y - 30, '#FCD34D'); // Dorado
+                
+                // Aumentar dificultad
+                if (score % 50 === 0) speedMultiplier += 0.2;
+                
+                // Limpiar pantalla de items viejos para enfocar
+                // fallingItems = []; // Opcional: limpiar todo
+                
+                generateQuestion();
+            } else {
+                // INCORRECTO
+                lives--;
+                updateLives();
+                createExplosion(player.x, player.y - 30, '#991B1B'); // Rojo oscuro
+                // Vibrar pantalla
+                canvas.style.transform = 'translate(5px, 5px)';
+                setTimeout(() => canvas.style.transform = 'translate(0, 0)', 100);
+
+                if (lives <= 0) {
+                    endGame();
+                }
+            }
+        }
+
+        function updateLives() {
+            let hearts = "";
+            for(let i=0; i<lives; i++) hearts += "❤️";
+            livesDisplay.innerText = hearts;
+        }
+
+        function endGame() {
+            gameState = 'GAMEOVER';
+            uiLayer.classList.add('hidden');
+            gameOverScreen.classList.remove('hidden');
+            finalScoreDisplay.innerText = score;
+        }
+
+        // --- SISTEMA DE DIBUJO ---
+        function draw() {
+            // Fondo
+            // Gradiente
+            const gradient = ctx.createLinearGradient(0, 0, 0, height);
+            gradient.addColorStop(0, '#0f172a');
+            gradient.addColorStop(1, '#1e3a8a');
+            ctx.fillStyle = gradient;
+            ctx.fillRect(0, 0, width, height);
+
+            // Nieve (Simplificado para rendimiento dentro del mismo loop)
+            ctx.fillStyle = 'rgba(255, 255, 255, 0.3)';
+            for(let i=0; i<50; i++) {
+                ctx.beginPath();
+                // Nieve estática aleatoria cada frame crea "estática de tv", 
+                // para nieve real necesitamos objetos persistentes.
+                // Usemos simple "estrellas" de fondo por ahora
+                let sx = (Math.sin(lastTime * 0.0001 + i) * width + width) % width;
+                let sy = (lastTime * 0.05 + i * 10) % height;
+                ctx.arc(sx, sy, 2, 0, Math.PI*2);
+                ctx.fill();
+            }
+
+            // Jugador
+            ctx.font = "80px Arial";
+            ctx.textAlign = "center";
+            ctx.textBaseline = "middle";
+            ctx.fillText(player.emoji, player.x, player.y);
+
+            // Items cayendo
+            for (let item of fallingItems) {
+                ctx.save();
+                ctx.translate(item.x, item.y);
+                ctx.rotate(item.rotation);
+                
+                // Dibujar Regalo
+                ctx.shadowColor = "rgba(0,0,0,0.3)";
+                ctx.shadowBlur = 10;
+                ctx.font = "50px Arial";
+                ctx.fillText(item.emoji, 0, 0);
+                
+                // Dibujar Número
+                ctx.shadowBlur = 0;
+                ctx.fillStyle = "#1e293b"; // Sombra texto
+                ctx.font = "bold 24px Nunito";
+                ctx.fillText(item.value, 2, 2);
+                
+                ctx.fillStyle = "#ffffff";
+                ctx.fillText(item.value, 0, 0);
+
+                ctx.restore();
+            }
+
+            // Partículas
+            for (let p of particles) {
+                ctx.globalAlpha = p.life;
+                ctx.fillStyle = p.color;
+                ctx.beginPath();
+                ctx.arc(p.x, p.y, p.size, 0, Math.PI*2);
+                ctx.fill();
+                ctx.globalAlpha = 1;
+            }
+        }
+
+        function createExplosion(x, y, color) {
+            for (let i = 0; i < 20; i++) {
+                particles.push({
+                    x: x,
+                    y: y,
+                    vx: (Math.random() - 0.5) * 10,
+                    vy: (Math.random() - 0.5) * 10,
+                    life: 1,
+                    color: color,
+                    size: Math.random() * 5 + 2
+                });
+            }
+        }
+
+        // --- INPUTS ---
+        
+        // Ratón
+        window.addEventListener('mousemove', (e) => {
+            if (gameState === 'PLAYING') {
+                player.targetX = e.clientX;
+            }
+        });
+
+        // Táctil
+        window.addEventListener('touchmove', (e) => {
+            if (gameState === 'PLAYING') {
+                e.preventDefault(); // Prevenir scroll
+                player.targetX = e.touches[0].clientX;
+            }
+        }, { passive: false });
+
+        window.addEventListener('touchstart', (e) => {
+            if (gameState === 'PLAYING') {
+                player.targetX = e.touches[0].clientX;
+            }
+        });
+
+    </script>
+</body>
+</html>
